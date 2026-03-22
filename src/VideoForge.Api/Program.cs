@@ -27,11 +27,16 @@ app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.SwaggerEndpoint("/swagger/v1/swagger.json", "VideoForge API v1");
-    options.RoutePrefix = string.Empty; // Swagger UI alla root
+    options.RoutePrefix = "swagger";
 });
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseHttpsRedirection();
 app.UseAuthorization();
 app.MapControllers();
+
+// Fallback: SPA routing - serve index.html per rotte non-API
+app.MapFallbackToFile("index.html");
 
 app.Run();
