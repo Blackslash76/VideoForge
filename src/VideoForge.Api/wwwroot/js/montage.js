@@ -58,11 +58,15 @@ function renderPhotoList() {
     list.innerHTML = montageFiles.map((f, i) => {
         const url = URL.createObjectURL(f);
         return `
-            <div class="photo-thumb" draggable="true" data-index="${i}">
-                <img src="${url}" alt="${f.name}">
-                <span class="photo-order">${i + 1}</span>
-                <button class="photo-remove" onclick="removePhoto(${i})">&times;</button>
-                <div class="photo-name">${f.name.length > 15 ? f.name.substring(0,12) + '...' : f.name}</div>
+            <div class="photo-thumb-wrap">
+                <div class="photo-thumb" draggable="true" data-index="${i}">
+                    <img src="${url}" alt="${f.name}">
+                    <span class="photo-order">${i + 1}</span>
+                    <button class="photo-remove" onclick="removePhoto(${i})">&times;</button>
+                    <div class="photo-name">${f.name.length > 15 ? f.name.substring(0,12) + '...' : f.name}</div>
+                </div>
+                <input type="text" class="photo-caption-input" data-index="${i}" placeholder="didascalia..."
+                       style="width:80px; font-size:0.6rem; padding:2px 4px; margin-top:2px; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-secondary); border-radius:4px;">
             </div>`;
     }).join('');
 
@@ -167,6 +171,42 @@ async function createMontage() {
     form.append('outroText', document.getElementById('montageOutro').value);
     form.append('audioFadeIn', document.getElementById('audioFadeIn').value);
     form.append('audioFadeOut', document.getElementById('audioFadeOut').value);
+
+    // Cinematic settings
+    form.append('colorGrade', document.getElementById('colorGrade').value);
+    form.append('vignette', document.getElementById('vignette').checked);
+    form.append('filmGrain', document.getElementById('filmGrain').checked);
+    form.append('letterbox', document.getElementById('letterbox').checked);
+    form.append('particleEffect', document.getElementById('particleEffect').value);
+    form.append('memoryFlash', document.getElementById('memoryFlash').checked);
+
+    // Intro cinematico
+    const introTitle = document.getElementById('introTitle').value;
+    if (introTitle) {
+        form.append('introTitle', introTitle);
+        form.append('introSubtitle', document.getElementById('introSubtitle').value);
+        form.append('introDate', document.getElementById('introDate').value);
+    }
+
+    // Outro / dedica
+    const outroTitle = document.getElementById('outroTitle').value;
+    if (outroTitle) {
+        form.append('outroTitle', outroTitle);
+        form.append('outroMessage', document.getElementById('outroMessage').value);
+        form.append('outroCredits', document.getElementById('outroCredits').value);
+    }
+
+    // Captions per foto
+    const captionInputs = document.querySelectorAll('.photo-caption-input');
+    if (captionInputs.length > 0) {
+        const captions = [];
+        captionInputs.forEach(input => {
+            if (input.value.trim()) {
+                captions.push({ index: parseInt(input.dataset.index), text: input.value.trim() });
+            }
+        });
+        if (captions.length > 0) form.append('captions', JSON.stringify(captions));
+    }
 
     try {
         const res = await fetch(`${API}/montage`, { method: 'POST', body: form });

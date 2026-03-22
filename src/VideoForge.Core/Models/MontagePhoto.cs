@@ -23,6 +23,9 @@ public class MontagePhoto
     // Parallax
     public double ParallaxIntensity { get; set; } = 0.5;
 
+    // Didascalia per questa foto
+    public PhotoCaption? Caption { get; set; }
+
     // Output
     public string? AnimatedClipPath { get; set; }
     public bool IsAnimated { get; set; }

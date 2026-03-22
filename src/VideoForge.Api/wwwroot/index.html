@@ -117,24 +117,105 @@
             </div>
         </div>
 
-        <!-- Step 4: Details -->
+        <!-- Step 4: Cinematic Effects -->
         <div class="card" style="margin-bottom: 1.5rem;">
             <div class="card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                4. Personalizza
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+                4. Effetti Cinematici
+            </div>
+            <div class="form-group">
+                <label>Color Grading</label>
+                <select id="colorGrade">
+                    <option value="1" selected>Warm Memory (toni caldi dorati)</option>
+                    <option value="2">Cinematic Teal (teal+orange)</option>
+                    <option value="3">Vintage Nostalgia (effetto sbiadito)</option>
+                    <option value="4">Dramatic B&W (bianco e nero)</option>
+                    <option value="5">Vivid Dream (colori saturi)</option>
+                    <option value="6">Soft Pastel (delicato)</option>
+                    <option value="0">Nessuno</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Particelle</label>
+                <select id="particleEffect">
+                    <option value="0">Nessuna</option>
+                    <option value="1">Cuori</option>
+                    <option value="2">Stelle</option>
+                    <option value="3">Coriandoli</option>
+                    <option value="4">Scintille</option>
+                    <option value="5">Lucciole</option>
+                    <option value="6">Neve</option>
+                    <option value="7">Bolle</option>
+                </select>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:1.2rem; margin-top:0.5rem;">
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.85rem; color:var(--text-secondary);">
+                    <input type="checkbox" id="vignette" checked> Vignette (bordi scuri)
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.85rem; color:var(--text-secondary);">
+                    <input type="checkbox" id="filmGrain" checked> Film Grain (grana pellicola)
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.85rem; color:var(--text-secondary);">
+                    <input type="checkbox" id="memoryFlash" checked> Memory Flash (lampo tra foto)
+                </label>
+                <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer; font-size:0.85rem; color:var(--text-secondary);">
+                    <input type="checkbox" id="letterbox"> Letterbox (bande cinema)
+                </label>
+            </div>
+        </div>
+
+        <!-- Step 5: Intro / Dedica / Dettagli -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>
+                5. Intro e Dedica
             </div>
             <div class="form-group">
                 <label>Nome del video</label>
                 <input type="text" id="montageName" placeholder="Es: Buon Compleanno!" style="width:100%; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-primary); padding:0.6rem; border-radius:8px; font-size:0.9rem;">
             </div>
-            <div class="form-row">
+
+            <div style="padding:0.75rem; background:var(--bg-secondary); border-radius:var(--radius); margin-bottom:1rem; border-left:3px solid var(--accent);">
+                <div style="font-size:0.8rem; font-weight:600; color:var(--accent-light); margin-bottom:0.5rem;">Schermata Iniziale (fade dal nero)</div>
                 <div class="form-group">
-                    <label>Testo Iniziale (intro)</label>
-                    <input type="text" id="montageIntro" placeholder="Es: Per i nostri piccoli..." style="width:100%; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-primary); padding:0.6rem; border-radius:8px; font-size:0.85rem;">
+                    <label>Titolo</label>
+                    <input type="text" id="introTitle" placeholder="Es: Buon Compleanno" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Sottotitolo</label>
+                        <input type="text" id="introSubtitle" placeholder="Es: Marco e Giulia" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
+                    </div>
+                    <div class="form-group">
+                        <label>Data</label>
+                        <input type="text" id="introDate" placeholder="Es: 15 Marzo 2026" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
+                    </div>
+                </div>
+            </div>
+
+            <div style="padding:0.75rem; background:var(--bg-secondary); border-radius:var(--radius); margin-bottom:1rem; border-left:3px solid var(--danger);">
+                <div style="font-size:0.8rem; font-weight:600; color:#e17055; margin-bottom:0.5rem;">Schermata Finale (dedica)</div>
+                <div class="form-group">
+                    <label>Titolo finale</label>
+                    <input type="text" id="outroTitle" placeholder="Es: Con tutto il nostro amore" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
                 </div>
                 <div class="form-group">
-                    <label>Testo Finale (outro)</label>
-                    <input type="text" id="montageOutro" placeholder="Es: Con tutto il nostro amore" style="width:100%; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-primary); padding:0.6rem; border-radius:8px; font-size:0.85rem;">
+                    <label>Messaggio</label>
+                    <input type="text" id="outroMessage" placeholder="Es: Ogni momento con voi e un regalo" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
+                </div>
+                <div class="form-group">
+                    <label>Credits (piccolo, in basso)</label>
+                    <input type="text" id="outroCredits" placeholder="Es: Realizzato con amore da Mamma e Papa" style="width:100%; background:var(--bg-primary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.85rem;">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Testo Iniziale (legacy)</label>
+                    <input type="text" id="montageIntro" placeholder="" style="width:100%; background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-primary); padding:0.5rem; border-radius:6px; font-size:0.8rem; display:none;">
+                </div>
+                <div class="form-group">
+                    <input type="text" id="montageOutro" style="display:none;">
                 </div>
             </div>
             <div class="form-group">

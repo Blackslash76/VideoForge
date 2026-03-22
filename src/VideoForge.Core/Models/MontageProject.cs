@@ -20,7 +20,10 @@ public class MontageProject
     public int BitrateKbps { get; set; } = 12000;
     public bool UseHardwareAcceleration { get; set; } = true;
 
-    // Intro/Outro
+    // Impostazioni cinematiche
+    public CinematicSettings Cinematic { get; set; } = new();
+
+    // Intro/Outro (legacy, ora in CinematicSettings)
     public string? IntroText { get; set; }
     public string? OutroText { get; set; }
     public string? IntroFontColor { get; set; } = "#FFFFFF";

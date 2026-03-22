@@ -27,6 +27,12 @@
 .tab span { font-size: 1.1rem; }
 
 /* Photo Grid */
+.photo-thumb-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
 .photo-grid {
     display: flex;
     flex-wrap: wrap;

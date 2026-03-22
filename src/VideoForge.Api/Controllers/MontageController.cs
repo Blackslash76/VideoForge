@@ -41,7 +41,26 @@ public class MontageController : ControllerBase
         [FromForm] string? introText = null,
         [FromForm] string? outroText = null,
         [FromForm] double audioFadeIn = 2.0,
-        [FromForm] double audioFadeOut = 3.0)
+        [FromForm] double audioFadeOut = 3.0,
+        // Cinematic settings
+        [FromForm] ColorGrade colorGrade = ColorGrade.WarmMemory,
+        [FromForm] bool vignette = true,
+        [FromForm] bool filmGrain = true,
+        [FromForm] double filmGrainIntensity = 0.15,
+        [FromForm] bool letterbox = false,
+        [FromForm] ParticleEffect particleEffect = ParticleEffect.None,
+        [FromForm] bool memoryFlash = true,
+        // Intro/Outro cinematico
+        [FromForm] string? introTitle = null,
+        [FromForm] string? introSubtitle = null,
+        [FromForm] string? introDate = null,
+        [FromForm] double introDuration = 6.0,
+        [FromForm] string? outroTitle = null,
+        [FromForm] string? outroMessage = null,
+        [FromForm] string? outroCredits = null,
+        [FromForm] double outroDuration = 8.0,
+        // Didascalie (JSON array: [{"index":0,"text":"Prima foto"},{"index":2,"text":"Al mare"}])
+        [FromForm] string? captions = null)
     {
         if (photos == null || photos.Count == 0)
             return BadRequest(new { error = "Nessuna foto fornita" });
@@ -64,7 +83,28 @@ public class MontageController : ControllerBase
             BitrateKbps = Math.Clamp(bitrateKbps, 4000, 50000),
             UseHardwareAcceleration = useHardwareAcceleration,
             IntroText = introText,
-            OutroText = outroText
+            OutroText = outroText,
+            Cinematic = new CinematicSettings
+            {
+                ColorGrade = colorGrade,
+                Vignette = vignette,
+                VignetteIntensity = 0.4,
+                FilmGrain = filmGrain,
+                FilmGrainIntensity = Math.Clamp(filmGrainIntensity, 0, 0.5),
+                Letterbox = letterbox,
+                ParticleEffect = particleEffect,
+                MemoryFlash = memoryFlash,
+                CinematicIntro = !string.IsNullOrWhiteSpace(introTitle),
+                IntroTitle = introTitle,
+                IntroSubtitle = introSubtitle,
+                IntroDate = introDate,
+                IntroDuration = Math.Clamp(introDuration, 3, 10),
+                CinematicOutro = !string.IsNullOrWhiteSpace(outroTitle),
+                OutroTitle = outroTitle,
+                OutroMessage = outroMessage,
+                OutroCredits = outroCredits,
+                OutroDuration = Math.Clamp(outroDuration, 4, 15)
+            }
         };
 
         // Storage
@@ -102,6 +142,31 @@ public class MontageController : ControllerBase
                 Height = h,
                 DisplayDuration = photoDuration
             });
+        }
+
+        // Parse and apply captions
+        if (!string.IsNullOrWhiteSpace(captions))
+        {
+            try
+            {
+                var captionList = System.Text.Json.JsonSerializer.Deserialize<List<CaptionDto>>(captions);
+                if (captionList != null)
+                {
+                    foreach (var c in captionList)
+                    {
+                        if (c.Index >= 0 && c.Index < project.Photos.Count && !string.IsNullOrWhiteSpace(c.Text))
+                        {
+                            project.Photos[c.Index].Caption = new PhotoCaption
+                            {
+                                Text = c.Text,
+                                Position = c.Position ?? "bottom",
+                                FontSize = c.FontSize > 0 ? c.FontSize : 42
+                            };
+                        }
+                    }
+                }
+            }
+            catch { /* ignore invalid JSON */ }
         }
 
         // Save audio tracks

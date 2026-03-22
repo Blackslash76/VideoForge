@@ -92,16 +92,39 @@ public class MontageService : IMontageService
 
         try
         {
+            var cinema = project.Cinematic;
+
+            // FASE 0: Genera intro cinematico
+            string? introClipPath = null;
+            if (cinema.CinematicIntro && !string.IsNullOrWhiteSpace(cinema.IntroTitle))
+            {
+                project.StatusMessage = "Generazione intro cinematico...";
+                project.Progress = 2;
+                introClipPath = await CinematicEffectsService.GenerateIntroClipAsync(
+                    cinema, project.OutputWidth, project.OutputHeight, project.Fps, project.UseHardwareAcceleration, ct);
+            }
+
             // FASE 1: Anima ogni foto individualmente
             project.Status = MontageStatus.AnimatingPhotos;
             project.StatusMessage = "Animazione foto in corso...";
             await AnimateAllPhotosAsync(project, projectDir, ct);
 
+            // FASE 1.5: Applica didascalie alle clip animate
+            await ApplyCaptionsAsync(project, ct);
+
             // FASE 2: Assembla i clip animati in sequenza con transizioni
             project.Status = MontageStatus.AssemblingVideo;
             project.StatusMessage = "Assemblaggio video con transizioni...";
             project.Progress = 60;
-            var silentVideoPath = await AssembleClipsAsync(project, projectDir, ct);
+            var silentVideoPath = await AssembleClipsAsync(project, projectDir, ct, introClipPath);
+
+            // FASE 2.5: Applica effetti cinematici (color grading, vignette, grain)
+            if (cinema.ColorGrade != ColorGrade.None || cinema.Vignette || cinema.FilmGrain || cinema.Letterbox)
+            {
+                project.StatusMessage = "Applicazione effetti cinematici...";
+                project.Progress = 68;
+                silentVideoPath = await ApplyCinematicEffectsAsync(project, silentVideoPath, projectDir, ct);
+            }
 
             // FASE 3: Mix audio - concatena tracce, fade in/out, sincronizza
             project.Status = MontageStatus.MixingAudio;
@@ -211,14 +234,68 @@ public class MontageService : IMontageService
         project.PhotosAnimated = project.Photos.Count;
     }
 
+    // ─── Fase 1.5: Applica didascalie ──────────────────
+    private async Task ApplyCaptionsAsync(MontageProject project, CancellationToken ct)
+    {
+        foreach (var photo in project.Photos.Where(p => p.IsAnimated && p.Caption != null && !string.IsNullOrWhiteSpace(p.Caption.Text)))
+        {
+            var clipPath = photo.AnimatedClipPath!;
+            var captionedPath = clipPath.Replace(".mp4", "_cap.mp4");
+
+            var captionFilter = CinematicEffectsService.GetCaptionFilter(photo.Caption!, photo.DisplayDuration);
+            var memoryFlash = project.Cinematic.MemoryFlash
+                ? "," + CinematicEffectsService.GetMemoryFlashFilter(project.Cinematic.MemoryFlashDuration, photo.DisplayDuration)
+                : "";
+
+            var encoder = project.UseHardwareAcceleration ? "h264_nvenc" : "libx264";
+            var preset = project.UseHardwareAcceleration ? "-preset p4 -tune hq" : "-preset medium";
+            var args = $"-i \"{clipPath}\" -vf \"{captionFilter}{memoryFlash}\" " +
+                       $"-c:v {encoder} {preset} -b:v {project.BitrateKbps}k -y \"{captionedPath}\"";
+
+            await RunFfmpegAsync(args, ct);
+
+            photo.AnimatedClipPath = captionedPath;
+        }
+    }
+
     // ─── Fase 2: Assembla clip con transizioni ───────
-    private async Task<string> AssembleClipsAsync(MontageProject project, string projectDir, CancellationToken ct)
+    private async Task<string> AssembleClipsAsync(MontageProject project, string projectDir, CancellationToken ct, string? introClipPath = null)
     {
         var outputPath = Path.Combine(projectDir, "assembled_silent.mp4");
         var clips = project.Photos.Where(p => p.IsAnimated && p.AnimatedClipPath != null).ToList();
 
         if (clips.Count == 0)
             throw new InvalidOperationException("Nessun clip animato disponibile");
+
+        // Prepend intro clip as a virtual MontagePhoto
+        if (introClipPath != null)
+        {
+            clips.Insert(0, new MontagePhoto
+            {
+                AnimatedClipPath = introClipPath,
+                IsAnimated = true,
+                DisplayDuration = project.Cinematic.IntroDuration,
+                TransitionToNext = TransitionType.CrossFade,
+                TransitionDuration = 2.0,
+                FileName = "_intro_"
+            });
+        }
+
+        // Append outro clip
+        if (project.Cinematic.CinematicOutro && !string.IsNullOrWhiteSpace(project.Cinematic.OutroTitle))
+        {
+            var outroPath = await CinematicEffectsService.GenerateOutroClipAsync(
+                project.Cinematic, project.OutputWidth, project.OutputHeight, project.Fps, project.UseHardwareAcceleration, ct);
+            clips.Add(new MontagePhoto
+            {
+                AnimatedClipPath = outroPath,
+                IsAnimated = true,
+                DisplayDuration = project.Cinematic.OutroDuration,
+                TransitionToNext = TransitionType.Fade,
+                TransitionDuration = 2.0,
+                FileName = "_outro_"
+            });
+        }
 
         if (clips.Count == 1)
         {
@@ -281,6 +358,27 @@ public class MontageService : IMontageService
 
         var args = $"{filter} -map \"[final]\" -c:v {encoder} -b:v {project.BitrateKbps}k {presetArgs} " +
                    $"-r {project.Fps} -pix_fmt yuv420p -movflags +faststart -y \"{outputPath}\"";
+
+        await RunFfmpegAsync(args, ct);
+        return outputPath;
+    }
+
+    // ─── Fase 2.5: Effetti cinematici globali ──────────
+    private async Task<string> ApplyCinematicEffectsAsync(MontageProject project, string videoPath, string projectDir, CancellationToken ct)
+    {
+        var outputPath = Path.Combine(projectDir, "cinematic_graded.mp4");
+        var filterChain = CinematicEffectsService.BuildCinematicFilterChain(
+            project.Cinematic, project.OutputWidth, project.OutputHeight);
+
+        if (string.IsNullOrEmpty(filterChain))
+            return videoPath;
+
+        var encoder = project.UseHardwareAcceleration ? "h264_nvenc" : "libx264";
+        var preset = project.UseHardwareAcceleration ? "-preset p4 -tune hq -rc vbr" : "-preset medium -crf 18";
+
+        var args = $"-i \"{videoPath}\" -vf \"{filterChain}\" " +
+                   $"-c:v {encoder} -b:v {project.BitrateKbps}k {preset} " +
+                   $"-pix_fmt yuv420p -movflags +faststart -y \"{outputPath}\"";
 
         await RunFfmpegAsync(args, ct);
         return outputPath;
