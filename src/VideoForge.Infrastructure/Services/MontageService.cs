@@ -415,6 +415,12 @@ public class MontageService : IMontageService
     }
 
     // ─── Fase 3: Mix audio ───────────────────────────
+    // Supporta:
+    //   - Singola traccia con fade in/out
+    //   - Multiple tracce musicali con crossfade tra brani
+    //   - Layer voiceover con ducking automatico sulla musica
+    //   - Layer effetti sonori posizionati nel tempo
+    //   - Mix finale di tutti i layer
     private async Task<string?> MixAudioAsync(MontageProject project, string projectDir, CancellationToken ct)
     {
         if (project.AudioTracks.Count == 0)
@@ -423,58 +429,227 @@ public class MontageService : IMontageService
         var outputPath = Path.Combine(projectDir, "mixed_audio.aac");
         var videoDuration = project.Photos.Sum(p => p.DisplayDuration)
             - project.Photos.Skip(1).Sum(p => p.TransitionDuration);
+        var dur = videoDuration.ToString("F2", CultureInfo.InvariantCulture);
 
-        if (project.AudioTracks.Count == 1)
+        var musicTracks = project.AudioTracks.Where(t => t.LayerType == AudioLayerType.Music).OrderBy(t => t.Order).ToList();
+        var voiceoverTracks = project.AudioTracks.Where(t => t.LayerType == AudioLayerType.Voiceover).OrderBy(t => t.StartOffsetSeconds).ToList();
+        var sfxTracks = project.AudioTracks.Where(t => t.LayerType == AudioLayerType.SoundEffect).OrderBy(t => t.StartOffsetSeconds).ToList();
+
+        // Caso semplice: singola traccia senza layer aggiuntivi
+        if (project.AudioTracks.Count == 1 && musicTracks.Count == 1)
         {
-            // Singola traccia: taglia alla durata video + fade in/out
-            var track = project.AudioTracks[0];
-            var fadeIn = track.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
-            var fadeOut = track.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
-            var dur = videoDuration.ToString("F2", CultureInfo.InvariantCulture);
-            var fadeOutStart = (videoDuration - track.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
-            var vol = track.Volume.ToString("F2", CultureInfo.InvariantCulture);
-
-            var args = $"-i \"{track.FilePath}\" " +
-                       $"-af \"afade=t=in:st=0:d={fadeIn},afade=t=out:st={fadeOutStart}:d={fadeOut},volume={vol}\" " +
-                       $"-t {dur} -c:a aac -b:a 256k -y \"{outputPath}\"";
-
+            var track = musicTracks[0];
+            var args = BuildSingleTrackArgs(track, videoDuration, outputPath);
             await RunFfmpegAsync(args, ct);
+            return outputPath;
+        }
+
+        // ─── Costruzione filter_complex multi-layer ───
+        var sb = new StringBuilder();
+        var inputs = new List<AudioTrack>();
+
+        // Aggiungi tutti gli input
+        foreach (var t in musicTracks) inputs.Add(t);
+        foreach (var t in voiceoverTracks) inputs.Add(t);
+        foreach (var t in sfxTracks) inputs.Add(t);
+
+        foreach (var t in inputs)
+            sb.Append($"-i \"{t.FilePath}\" ");
+
+        sb.Append("-filter_complex \"");
+        int inputIdx = 0;
+        var layerOutputs = new List<string>(); // label dei layer finali da mixare
+
+        // ═══ LAYER 1: Musica (crossfade tra brani) ═══
+        if (musicTracks.Count > 0)
+        {
+            var musicLabel = BuildMusicLayer(sb, musicTracks, videoDuration, ref inputIdx);
+            layerOutputs.Add(musicLabel);
+        }
+
+        // ═══ LAYER 2: Voiceover (con posizionamento temporale) ═══
+        foreach (var vo in voiceoverTracks)
+        {
+            var voLabel = $"vo{inputIdx}";
+            var vol = vo.Volume.ToString("F2", CultureInfo.InvariantCulture);
+            var fadeIn = vo.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
+            var fadeOut = vo.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
+            var delay = (vo.StartOffsetSeconds * 1000).ToString("F0", CultureInfo.InvariantCulture);
+            var fadeOutSt = Math.Max(0, vo.DurationSeconds - vo.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
+
+            sb.Append($"[{inputIdx}:a]volume={vol}," +
+                      $"afade=t=in:st=0:d={fadeIn}," +
+                      $"afade=t=out:st={fadeOutSt}:d={fadeOut}," +
+                      $"adelay={delay}|{delay}[{voLabel}];");
+
+            layerOutputs.Add(voLabel);
+            inputIdx++;
+        }
+
+        // ═══ LAYER 3: Effetti sonori (posizionati nel tempo) ═══
+        foreach (var sfx in sfxTracks)
+        {
+            var sfxLabel = $"sfx{inputIdx}";
+            var vol = sfx.Volume.ToString("F2", CultureInfo.InvariantCulture);
+            var delay = (sfx.StartOffsetSeconds * 1000).ToString("F0", CultureInfo.InvariantCulture);
+
+            sb.Append($"[{inputIdx}:a]volume={vol},adelay={delay}|{delay}[{sfxLabel}];");
+
+            layerOutputs.Add(sfxLabel);
+            inputIdx++;
+        }
+
+        // ═══ MIX FINALE: merge di tutti i layer ═══
+        if (layerOutputs.Count == 1)
+        {
+            // Un solo layer, applica fade globali
+            var firstMusic = musicTracks.FirstOrDefault() ?? inputs[0];
+            var globalFadeIn = firstMusic.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
+            var lastMusic = musicTracks.LastOrDefault() ?? inputs[^1];
+            var globalFadeOut = lastMusic.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
+            var fadeOutSt = (videoDuration - lastMusic.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
+
+            sb.Append($"[{layerOutputs[0]}]afade=t=in:st=0:d={globalFadeIn},afade=t=out:st={fadeOutSt}:d={globalFadeOut}[out]\"");
         }
         else
         {
-            // Multiple tracce: concatena con crossfade tra di loro
-            var sb = new StringBuilder();
-            foreach (var track in project.AudioTracks.OrderBy(t => t.Order))
-                sb.Append($"-i \"{track.FilePath}\" ");
+            // Ducking: se c'è voiceover, applica sidechaincompress sulla musica
+            bool hasDucking = voiceoverTracks.Count > 0 && musicTracks.Count > 0;
 
-            sb.Append("-filter_complex \"");
-
-            // Fade e volume per ogni traccia
-            for (int i = 0; i < project.AudioTracks.Count; i++)
+            if (hasDucking)
             {
-                var track = project.AudioTracks.OrderBy(t => t.Order).ElementAt(i);
-                var vol = track.Volume.ToString("F2", CultureInfo.InvariantCulture);
-                sb.Append($"[{i}:a]volume={vol}[a{i}];");
+                // Mixa tutti i voiceover in un singolo segnale per il sidechain
+                var voLabels = layerOutputs.Where(l => l.StartsWith("vo")).ToList();
+                var musicLabel = layerOutputs.First(l => l.StartsWith("mus"));
+                var otherLabels = layerOutputs.Where(l => !l.StartsWith("vo") && !l.StartsWith("mus")).ToList();
+
+                // Unisci i voiceover come sidechain reference
+                if (voLabels.Count == 1)
+                {
+                    sb.Append($"[{voLabels[0]}]asplit=2[vo_mix][vo_sc];");
+                }
+                else
+                {
+                    foreach (var vl in voLabels)
+                        sb.Append($"[{vl}]");
+                    sb.Append($"amix=inputs={voLabels.Count}:normalize=0[vo_pre];");
+                    sb.Append("[vo_pre]asplit=2[vo_mix][vo_sc];");
+                }
+
+                // Ducking: comprimi la musica usando il voiceover come sidechain
+                var duckLevel = voiceoverTracks.First().DuckingLevel;
+                var threshold = 0.02;
+                var ratio = duckLevel < 0.3 ? 8 : 4; // più aggressivo se il duck è basso
+                sb.Append($"[{musicLabel}][vo_sc]sidechaincompress=" +
+                          $"threshold={threshold.ToString("F3", CultureInfo.InvariantCulture)}:" +
+                          $"ratio={ratio}:" +
+                          $"attack=200:release=1000:" +
+                          $"level_sc=1[mus_ducked];");
+
+                // Mix finale: musica ducked + voiceover + sfx
+                var mixInputs = new List<string> { "mus_ducked", "vo_mix" };
+                mixInputs.AddRange(otherLabels);
+
+                foreach (var l in mixInputs)
+                    sb.Append($"[{l}]");
+                sb.Append($"amix=inputs={mixInputs.Count}:duration=longest:normalize=0[premix];");
+
+                // Fade globali + loudnorm
+                var firstMusic = musicTracks.First();
+                var lastMusic = musicTracks.Last();
+                var globalFadeIn = firstMusic.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
+                var globalFadeOut = lastMusic.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
+                var fadeOutSt = (videoDuration - lastMusic.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
+
+                sb.Append($"[premix]afade=t=in:st=0:d={globalFadeIn},afade=t=out:st={fadeOutSt}:d={globalFadeOut}," +
+                          $"loudnorm=I=-14:TP=-1:LRA=11[out]\"");
             }
+            else
+            {
+                // No ducking: semplice amix di tutti i layer
+                foreach (var l in layerOutputs)
+                    sb.Append($"[{l}]");
+                sb.Append($"amix=inputs={layerOutputs.Count}:duration=longest:normalize=0[premix];");
 
-            // Concatena
-            for (int i = 0; i < project.AudioTracks.Count; i++)
-                sb.Append($"[a{i}]");
-            sb.Append($"concat=n={project.AudioTracks.Count}:v=0:a=1[mixed];");
+                var firstTrack = musicTracks.FirstOrDefault() ?? inputs[0];
+                var lastTrack = musicTracks.LastOrDefault() ?? inputs[^1];
+                var globalFadeIn = firstTrack.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
+                var globalFadeOut = lastTrack.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
+                var fadeOutSt = (videoDuration - lastTrack.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
 
-            // Fade globali e taglia alla durata video
-            var globalFadeIn = project.AudioTracks.First().FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
-            var globalFadeOut = project.AudioTracks.Last().FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
-            var fadeOutSt = (videoDuration - project.AudioTracks.Last().FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
-
-            sb.Append($"[mixed]afade=t=in:st=0:d={globalFadeIn},afade=t=out:st={fadeOutSt}:d={globalFadeOut}[out]\"");
-
-            var dur = videoDuration.ToString("F2", CultureInfo.InvariantCulture);
-            var args = $"{sb} -map \"[out]\" -t {dur} -c:a aac -b:a 256k -y \"{outputPath}\"";
-            await RunFfmpegAsync(args, ct);
+                sb.Append($"[premix]afade=t=in:st=0:d={globalFadeIn},afade=t=out:st={fadeOutSt}:d={globalFadeOut}," +
+                          $"loudnorm=I=-14:TP=-1:LRA=11[out]\"");
+            }
         }
 
+        var finalArgs = $"{sb} -map \"[out]\" -t {dur} -c:a aac -b:a 256k -y \"{outputPath}\"";
+        await RunFfmpegAsync(finalArgs, ct);
+
         return outputPath;
+    }
+
+    /// <summary>Costruisce il layer musicale con crossfade tra brani consecutivi.</summary>
+    private static string BuildMusicLayer(StringBuilder sb, List<AudioTrack> musicTracks, double videoDuration, ref int inputIdx)
+    {
+        if (musicTracks.Count == 1)
+        {
+            var t = musicTracks[0];
+            var vol = t.Volume.ToString("F2", CultureInfo.InvariantCulture);
+            var label = $"mus{inputIdx}";
+            sb.Append($"[{inputIdx}:a]volume={vol}[{label}];");
+            inputIdx++;
+            return label;
+        }
+
+        // Prima traccia: volume
+        var firstLabel = $"mt{inputIdx}";
+        sb.Append($"[{inputIdx}:a]volume={musicTracks[0].Volume.ToString("F2", CultureInfo.InvariantCulture)}[{firstLabel}];");
+        inputIdx++;
+
+        var currentLabel = firstLabel;
+
+        // Crossfade a catena: [A][B] -> acrossfade -> [AB], poi [AB][C] -> acrossfade -> [ABC]
+        double cumulativeOffset = musicTracks[0].DurationSeconds;
+
+        for (int i = 1; i < musicTracks.Count; i++)
+        {
+            var track = musicTracks[i];
+            var nextLabel = $"mt{inputIdx}";
+            var crossfadeDur = Math.Min(track.CrossfadeSeconds, Math.Min(cumulativeOffset, track.DurationSeconds) * 0.5);
+            var cf = crossfadeDur.ToString("F2", CultureInfo.InvariantCulture);
+            var vol = track.Volume.ToString("F2", CultureInfo.InvariantCulture);
+
+            sb.Append($"[{inputIdx}:a]volume={vol}[{nextLabel}];");
+
+            var xfadeLabel = $"mxf{i}";
+            sb.Append($"[{currentLabel}][{nextLabel}]acrossfade=d={cf}:c1=tri:c2=tri[{xfadeLabel}];");
+
+            currentLabel = xfadeLabel;
+            cumulativeOffset += track.DurationSeconds - crossfadeDur;
+            inputIdx++;
+        }
+
+        // Trim alla durata video
+        var dur = videoDuration.ToString("F2", CultureInfo.InvariantCulture);
+        var finalLabel = "mus_layer";
+        sb.Append($"[{currentLabel}]atrim=0:{dur},asetpts=PTS-STARTPTS[{finalLabel}];");
+
+        return finalLabel;
+    }
+
+    /// <summary>Argomenti FFmpeg per singola traccia musicale (caso semplice, no filter_complex).</summary>
+    private static string BuildSingleTrackArgs(AudioTrack track, double videoDuration, string outputPath)
+    {
+        var fadeIn = track.FadeInSeconds.ToString("F1", CultureInfo.InvariantCulture);
+        var fadeOut = track.FadeOutSeconds.ToString("F1", CultureInfo.InvariantCulture);
+        var dur = videoDuration.ToString("F2", CultureInfo.InvariantCulture);
+        var fadeOutStart = (videoDuration - track.FadeOutSeconds).ToString("F2", CultureInfo.InvariantCulture);
+        var vol = track.Volume.ToString("F2", CultureInfo.InvariantCulture);
+
+        return $"-i \"{track.FilePath}\" " +
+               $"-af \"afade=t=in:st=0:d={fadeIn},afade=t=out:st={fadeOutStart}:d={fadeOut},volume={vol}," +
+               $"loudnorm=I=-14:TP=-1:LRA=11\" " +
+               $"-t {dur} -c:a aac -b:a 256k -y \"{outputPath}\"";
     }
 
     // ─── Fase 4: Encoding finale ─────────────────────
