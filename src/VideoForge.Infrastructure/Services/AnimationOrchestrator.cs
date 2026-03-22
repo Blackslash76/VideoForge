@@ -12,14 +12,17 @@ public class AnimationOrchestrator : IAnimationOrchestrator
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _cancellationTokens = new();
     private readonly Dictionary<AnimationType, IAnimationEngine> _engines;
     private readonly IImageValidationService _imageValidation;
+    private readonly IAnimationCache? _animationCache;
     private readonly string _storagePath;
 
     public AnimationOrchestrator(
         IEnumerable<IAnimationEngine> engines,
-        IImageValidationService imageValidation)
+        IImageValidationService imageValidation,
+        IAnimationCache? animationCache = null)
     {
         _engines = engines.ToDictionary(e => e.SupportedType);
         _imageValidation = imageValidation;
+        _animationCache = animationCache;
         _storagePath = Path.Combine(Path.GetTempPath(), "VideoForge", "animations");
         Directory.CreateDirectory(_storagePath);
     }
@@ -85,13 +88,39 @@ public class AnimationOrchestrator : IAnimationOrchestrator
                 }
 
                 job.Status = AnimationStatus.Animating;
-                var progress = new Progress<double>(pct =>
-                {
-                    job.Progress = pct;
-                    if (pct > 80) job.Status = AnimationStatus.Encoding;
-                });
 
-                var outputPath = await engine.AnimateAsync(job, progress, cts.Token);
+                // Cache check
+                string? cachedPath = null;
+                string? fingerprint = null;
+                if (_animationCache != null)
+                {
+                    fingerprint = _animationCache.ComputeSettingsFingerprint(
+                        settings.OutputWidth, settings.OutputHeight, settings.Fps, settings.BitrateKbps,
+                        settings.DurationSeconds, (int)animationType, (int)settings.KenBurnsDirection,
+                        settings.KenBurnsZoomFactor, settings.ParallaxIntensity, settings.UseHardwareAcceleration);
+
+                    cachedPath = await _animationCache.GetCachedClipAsync(job.SourceImagePath, fingerprint, cts.Token);
+                }
+
+                string outputPath;
+                if (cachedPath != null)
+                {
+                    outputPath = cachedPath;
+                    job.StatusMessage = "Clip recuperato dalla cache!";
+                }
+                else
+                {
+                    var progress = new Progress<double>(pct =>
+                    {
+                        job.Progress = pct;
+                        if (pct > 80) job.Status = AnimationStatus.Encoding;
+                    });
+
+                    outputPath = await engine.AnimateAsync(job, progress, cts.Token);
+
+                    if (_animationCache != null && fingerprint != null)
+                        await _animationCache.StoreCachedClipAsync(job.SourceImagePath, fingerprint, outputPath, cts.Token);
+                }
 
                 job.OutputPath = outputPath;
                 job.Status = AnimationStatus.Completed;

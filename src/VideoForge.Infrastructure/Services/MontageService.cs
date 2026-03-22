@@ -15,12 +15,15 @@ public class MontageService : IMontageService
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource> _cancellationTokens = new();
     private readonly IEnumerable<IAnimationEngine> _engines;
     private readonly IImageValidationService _imageValidation;
+    private readonly IAnimationCache? _animationCache;
     private readonly string _storagePath;
 
-    public MontageService(IEnumerable<IAnimationEngine> engines, IImageValidationService imageValidation)
+    public MontageService(IEnumerable<IAnimationEngine> engines, IImageValidationService imageValidation,
+        IAnimationCache? animationCache = null)
     {
         _engines = engines;
         _imageValidation = imageValidation;
+        _animationCache = animationCache;
         _storagePath = Path.Combine(Path.GetTempPath(), "VideoForge", "montages");
         Directory.CreateDirectory(_storagePath);
     }
@@ -222,10 +225,37 @@ public class MontageService : IMontageService
                     ?? throw new InvalidOperationException("Nessun engine di animazione disponibile");
             }
 
-            var clipPath = await engine.AnimateAsync(animJob, new Progress<double>(p =>
+            // Cache lookup: stessa foto + stessi parametri = skip rendering
+            string? clipPath = null;
+            string? settingsFingerprint = null;
+
+            if (_animationCache != null)
             {
-                project.Progress = photoProgress + (p / 100.0) * (55.0 / project.Photos.Count);
-            }), ct);
+                settingsFingerprint = _animationCache.ComputeSettingsFingerprint(
+                    project.OutputWidth, project.OutputHeight, project.Fps, project.BitrateKbps,
+                    photo.DisplayDuration, (int)photo.AnimationType, (int)kbDir,
+                    photo.KenBurnsZoomFactor, photo.ParallaxIntensity, project.UseHardwareAcceleration);
+
+                clipPath = await _animationCache.GetCachedClipAsync(photo.FilePath, settingsFingerprint, ct);
+            }
+
+            if (clipPath != null)
+            {
+                // Cache hit — skip rendering
+                project.StatusMessage = $"Foto {i + 1}/{project.Photos.Count}: {photo.FileName} (dalla cache)";
+                project.Progress = photoProgress + 55.0 / project.Photos.Count;
+            }
+            else
+            {
+                // Cache miss — render e salva in cache
+                clipPath = await engine.AnimateAsync(animJob, new Progress<double>(p =>
+                {
+                    project.Progress = photoProgress + (p / 100.0) * (55.0 / project.Photos.Count);
+                }), ct);
+
+                if (_animationCache != null && settingsFingerprint != null)
+                    await _animationCache.StoreCachedClipAsync(photo.FilePath, settingsFingerprint, clipPath, ct);
+            }
 
             photo.AnimatedClipPath = clipPath;
             photo.IsAnimated = true;

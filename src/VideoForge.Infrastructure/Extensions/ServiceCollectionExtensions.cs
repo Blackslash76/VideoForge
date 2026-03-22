@@ -24,6 +24,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAnimationEngine, AiMotionEngine>();
         services.AddSingleton<IAnimationEngine, KenBurnsParallaxEngine>();
 
+        // Animation cache (library di clip pre-renderizzati)
+        services.AddSingleton<IAnimationCache, AnimationCacheService>();
+
         // Orchestrator
         services.AddSingleton<IAnimationOrchestrator, AnimationOrchestrator>();
 
