@@ -27,6 +27,9 @@ public static class ServiceCollectionExtensions
         // Orchestrator
         services.AddSingleton<IAnimationOrchestrator, AnimationOrchestrator>();
 
+        // Montage service
+        services.AddSingleton<IMontageService, MontageService>();
+
         return services;
     }
 }
